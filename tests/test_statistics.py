@@ -13,6 +13,14 @@ class FakeText:
         return self.content
 
 
+class FakeValue:
+    def __init__(self, value):
+        self.value = value
+
+    def get(self):
+        return self.value
+
+
 class TestStatisticsCalculation(unittest.TestCase):
     """Тесты расчёта статистики."""
 
@@ -88,6 +96,44 @@ class TestStatisticsCalculation(unittest.TestCase):
         self.assertEqual(len(dups), 2)
         self.assertEqual(dups['+79781234567'], 3)
         self.assertEqual(dups['+79161234567'], 2)
+
+    def test_duplicate_details_normalizes_phone_formats(self):
+        """Дубликаты считаются по номеру, а не по варианту записи"""
+        app = object.__new__(PhoneExtractorApp)
+        details = app.get_duplicate_details([
+            '+79781234567',
+            '89781234567',
+            '+7 (978) 123-45-67',
+            '+79161234567',
+        ])
+        dups = {phone: count for phone, count in details.items() if count > 1}
+        self.assertEqual(dups, {'+79781234567': 3})
+
+    def test_process_phones_dedups_normalized_phone_formats(self):
+        """Удаление дубликатов использует тот же нормализованный ключ"""
+        app = object.__new__(PhoneExtractorApp)
+        app.exclusions_text = FakeText('')
+        app.remove_duplicates = FakeValue(True)
+        app.sort_order = FakeValue('none')
+        app.phone_format = FakeValue('plus7')
+        app.prefix_entry = FakeValue('')
+        app.suffix_entry = FakeValue('')
+
+        phones = ['+79781234567', '89781234567', '+79161234567']
+        self.assertEqual(app.process_phones(phones), ['+79781234567', '+79161234567'])
+
+    def test_exclusions_match_normalized_phone_formats(self):
+        """Исключения применяются к тому же номеру в другом формате"""
+        app = object.__new__(PhoneExtractorApp)
+        app.exclusions_text = FakeText('89781234567')
+        app.remove_duplicates = FakeValue(False)
+        app.sort_order = FakeValue('none')
+        app.phone_format = FakeValue('plus7')
+        app.prefix_entry = FakeValue('')
+        app.suffix_entry = FakeValue('')
+
+        phones = ['+79781234567', '+79161234567']
+        self.assertEqual(app.process_phones(phones), ['+79161234567'])
 
     def test_no_duplicates(self):
         """Без дубликатов"""

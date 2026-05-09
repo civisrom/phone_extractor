@@ -526,8 +526,8 @@ class PhoneExtractorApp:
         # found_phones — список (с дублями в порядке нахождения)
         self.extracted_phones = found_phones
 
-        # Подсчёт дубликатов
-        self.duplicate_details = dict(Counter(found_phones))
+        # Подсчёт дубликатов по каноническому номеру, а не по исходному написанию
+        self.duplicate_details = self.get_duplicate_details(found_phones)
 
         # Сохраняем
         self.current_display_phones = found_phones.copy()
@@ -540,7 +540,7 @@ class PhoneExtractorApp:
 
         # Статистика
         original_count = len(found_phones)
-        unique_count = len(set(found_phones))
+        unique_count = self.count_unique_phones(found_phones)
         dup_count = original_count - unique_count
         processed_count = len(processed_phones)
 
@@ -817,15 +817,17 @@ class PhoneExtractorApp:
         # Исключения
         exclusions = self.get_exclusion_list()
         if exclusions:
-            result = [p for p in result if p not in exclusions]
+            exclusion_keys = {self.get_phone_identity_key(p) for p in exclusions}
+            result = [p for p in result if self.get_phone_identity_key(p) not in exclusion_keys]
 
         # Удаление дубликатов с сохранением порядка
         if self.remove_duplicates.get():
             seen = set()
             unique = []
             for p in result:
-                if p not in seen:
-                    seen.add(p)
+                phone_key = self.get_phone_identity_key(p)
+                if phone_key not in seen:
+                    seen.add(phone_key)
                     unique.append(p)
             result = unique
 
@@ -846,6 +848,42 @@ class PhoneExtractorApp:
             result = [f"{prefix}{p}{suffix}" for p in result]
 
         return result
+
+    @staticmethod
+    def get_phone_identity_key(phone: str) -> str:
+        """Канонический ключ для сравнения одинаковых номеров в разных форматах."""
+        phone = str(phone).strip()
+        if re.search(r'[^0-9+\s().-]', phone):
+            return phone
+
+        cleaned = re.sub(r'[^\d+]', '', phone)
+        digits = cleaned[1:] if cleaned.startswith('+') else cleaned
+
+        if len(digits) == 10:
+            return '+7' + digits
+        if digits.startswith('8') and len(digits) == 11:
+            return '+7' + digits[1:]
+        if digits.startswith('7') and len(digits) == 11:
+            return '+' + digits
+        if cleaned.startswith('+') and 8 <= len(digits) <= 15:
+            return '+' + digits
+
+        return phone
+
+    def get_duplicate_details(self, phones: List[str]) -> Dict[str, int]:
+        """Подсчёт вхождений одинаковых номеров с учётом разных форматов записи."""
+        counts = Counter()
+        labels = {}
+
+        for phone in phones:
+            phone_key = self.get_phone_identity_key(phone)
+            counts[phone_key] += 1
+            labels.setdefault(phone_key, phone_key)
+
+        return {labels[phone_key]: count for phone_key, count in counts.items()}
+
+    def count_unique_phones(self, phones: List[str]) -> int:
+        return len({self.get_phone_identity_key(phone) for phone in phones})
 
     def get_exclusion_list(self) -> Set[str]:
         """Получение нормализованного списка исключений"""
@@ -1208,21 +1246,25 @@ class PhoneExtractorApp:
         else:
             total_extracted = len(self.extracted_phones)
             current_display = len(self.current_display_phones)
-            unique_phones = len(set(self.current_display_phones))
+            unique_phones = self.count_unique_phones(self.current_display_phones)
             duplicates_count = current_display - unique_phones
 
             # Точный подсчёт: сколько убрано исключениями, сколько — дубликатами
             exclusions = self.get_exclusion_list()
             excluded_count = len(exclusions)
+            exclusion_keys = {self.get_phone_identity_key(p) for p in exclusions}
 
-            phones_after_exclusions = [p for p in self.current_display_phones if p not in exclusions]
+            phones_after_exclusions = [
+                p for p in self.current_display_phones
+                if self.get_phone_identity_key(p) not in exclusion_keys
+            ]
             removed_by_exclusions = current_display - len(phones_after_exclusions)
 
             processed = self.process_phones(self.current_display_phones)
             after_processing = len(processed)
 
             if self.remove_duplicates.get():
-                removed_by_dedup = len(phones_after_exclusions) - len(set(phones_after_exclusions))
+                removed_by_dedup = len(phones_after_exclusions) - self.count_unique_phones(phones_after_exclusions)
             else:
                 removed_by_dedup = 0
 
