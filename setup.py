@@ -7,7 +7,7 @@ setup(
     py_modules=['phone_extractor'],
     python_requires='>=3.9',
     install_requires=[
-        'tkinterdnd2>=0.3',
+        'tkinterdnd2>=0.4.3',
     ],
     extras_require={
         'dev': [

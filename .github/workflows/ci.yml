@@ -1,13 +1,11 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      python_version:
-        description: 'Версия Python для тестов (оставьте пустым для всех)'
-        required: false
-        default: ''
-        type: string
 
 jobs:
   test:

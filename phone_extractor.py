@@ -1,17 +1,28 @@
-import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, filedialog
 import re
 from typing import List, Set, Dict, Optional
-from collections import Counter, OrderedDict
+from collections import Counter
 import os
 import json
 import datetime
 
 try:
+    import tkinter as tk
+    from tkinter import ttk, scrolledtext, messagebox, filedialog
+except ImportError:
+    tk = None
+    ttk = scrolledtext = messagebox = filedialog = None
+
+try:
+    if tk is None:
+        raise ImportError
     from tkinterdnd2 import DND_FILES, TkinterDnD
     HAS_DND = True
 except ImportError:
+    DND_FILES = None
+    TkinterDnD = None
     HAS_DND = False
+
+TEXT_END = tk.END if tk is not None else "end"
 
 
 class PhoneExtractorApp:
@@ -391,7 +402,7 @@ class PhoneExtractorApp:
     # Обработка файлов и ввода
     # ────────────────────────────────────────────────────────────
     def _update_input_counter(self, event=None):
-        content = self.input_text.get("1.0", tk.END)
+        content = self.input_text.get("1.0", TEXT_END)
         chars = len(content.rstrip('\n'))
         lines = content.count('\n')
         self.input_counter_label.config(text=f"Символов: {chars} | Строк: {lines}")
@@ -433,7 +444,7 @@ class PhoneExtractorApp:
                     continue
 
             if content:
-                self.input_text.delete("1.0", tk.END)
+                self.input_text.delete("1.0", TEXT_END)
                 self.input_text.insert("1.0", content)
                 self._update_input_counter()
                 size_kb = os.path.getsize(file_path) / 1024
@@ -466,7 +477,7 @@ class PhoneExtractorApp:
 
         if file_path:
             try:
-                content = self.output_text.get("1.0", tk.END).strip()
+                content = self.output_text.get("1.0", TEXT_END).strip()
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(content)
                 messagebox.showinfo("Успех", f"Файл сохранён: {os.path.basename(file_path)}")
@@ -477,7 +488,7 @@ class PhoneExtractorApp:
         """Вставка текста из буфера обмена"""
         try:
             clipboard_content = self.root.clipboard_get()
-            self.input_text.delete("1.0", tk.END)
+            self.input_text.delete("1.0", TEXT_END)
             self.input_text.insert("1.0", clipboard_content)
             self._update_input_counter()
             messagebox.showinfo("Успех", "Текст вставлен из буфера обмена")
@@ -486,7 +497,7 @@ class PhoneExtractorApp:
 
     def copy_results(self):
         """Копирование результатов в буфер обмена"""
-        content = self.output_text.get("1.0", tk.END).strip()
+        content = self.output_text.get("1.0", TEXT_END).strip()
         if not content or content == "Номера не найдены":
             messagebox.showwarning("Предупреждение", "Нет результатов для копирования!")
             return
@@ -499,7 +510,7 @@ class PhoneExtractorApp:
     # ────────────────────────────────────────────────────────────
     def extract_phones(self):
         """Извлечение номеров из текста"""
-        text = self.input_text.get("1.0", tk.END)
+        text = self.input_text.get("1.0", TEXT_END)
 
         if not text.strip():
             messagebox.showwarning("Предупреждение", "Введите текст для обработки!")
@@ -603,9 +614,7 @@ class PhoneExtractorApp:
             r'(?!\d)'
         )
 
-        found_phones = []
-        # Храним занятые диапазоны (start, end) чтобы не дублировать перекрывающиеся совпадения
-        occupied_ranges = []
+        candidates = []
 
         def is_overlapping(start, end):
             for s, e in occupied_ranges:
@@ -613,34 +622,33 @@ class PhoneExtractorApp:
                     return True
             return False
 
-        # Паттерн 1: с разделителями (наиболее точный — приоритет)
+        # Паттерн 1: с разделителями (наиболее точный — приоритет при одинаковой позиции)
         for m in re.finditer(pattern, text):
-            start, end = m.start(), m.end()
-            if not is_overlapping(start, end):
-                digits = m.group(1) + m.group(2) + m.group(3) + m.group(4)
-                phone = '7' + digits
-                if self.validate_phone_number(phone):
-                    found_phones.append('+' + phone)
-                    occupied_ranges.append((start, end))
+            digits = m.group(1) + m.group(2) + m.group(3) + m.group(4)
+            phone = '7' + digits
+            if self.validate_phone_number(phone):
+                candidates.append((m.start(), m.end(), 0, '+' + phone))
 
         # Паттерн 2: сплошной
         for m in re.finditer(pattern_solid, text):
-            start, end = m.start(), m.end()
-            if not is_overlapping(start, end):
-                phone = '7' + m.group(1)
-                if self.validate_phone_number(phone):
-                    found_phones.append('+' + phone)
-                    occupied_ranges.append((start, end))
+            phone = '7' + m.group(1)
+            if self.validate_phone_number(phone):
+                candidates.append((m.start(), m.end(), 1, '+' + phone))
 
         # Паттерн 3: начинающийся с 7 (без +) с разделителями
         for m in re.finditer(pattern_seven, text):
-            start, end = m.start(), m.end()
+            digits = m.group(1) + m.group(2) + m.group(3) + m.group(4)
+            phone = '7' + digits
+            if self.validate_phone_number(phone):
+                candidates.append((m.start(), m.end(), 2, '+' + phone))
+
+        found_phones = []
+        # Храним занятые диапазоны (start, end) чтобы не дублировать перекрывающиеся совпадения.
+        occupied_ranges = []
+        for start, end, _priority, phone in sorted(candidates, key=lambda item: (item[0], item[2], item[1])):
             if not is_overlapping(start, end):
-                digits = m.group(1) + m.group(2) + m.group(3) + m.group(4)
-                phone = '7' + digits
-                if self.validate_phone_number(phone):
-                    found_phones.append('+' + phone)
-                    occupied_ranges.append((start, end))
+                found_phones.append(phone)
+                occupied_ranges.append((start, end))
 
         return found_phones
 
@@ -841,7 +849,7 @@ class PhoneExtractorApp:
 
     def get_exclusion_list(self) -> Set[str]:
         """Получение нормализованного списка исключений"""
-        exclusions_text = self.exclusions_text.get("1.0", tk.END).strip()
+        exclusions_text = self.exclusions_text.get("1.0", TEXT_END).strip()
         if not exclusions_text:
             return set()
 
@@ -887,7 +895,7 @@ class PhoneExtractorApp:
 
     def display_results(self, phones: List[str]):
         """Отображение результатов"""
-        self.output_text.delete("1.0", tk.END)
+        self.output_text.delete("1.0", TEXT_END)
 
         if not phones:
             self.output_text.insert("1.0", "Номера не найдены")
@@ -1005,7 +1013,7 @@ class PhoneExtractorApp:
 
             if search_mode == "contains":
                 if '*' in search_normalized:
-                    pattern = search_normalized.replace('*', '.*')
+                    pattern = self.build_search_pattern(search_normalized)
                     if re.search(pattern, phone_digits):
                         found_phones.append(phone)
                 elif search_normalized in phone_digits:
@@ -1023,7 +1031,7 @@ class PhoneExtractorApp:
         self.search_results = found_phones
         self.is_searching = True
 
-        self.search_results_text.delete('1.0', tk.END)
+        self.search_results_text.delete('1.0', TEXT_END)
         if found_phones:
             self.search_results_text.insert('1.0', '\n'.join(found_phones))
         else:
@@ -1045,13 +1053,18 @@ class PhoneExtractorApp:
 
         self.update_info_panel()
 
+    @staticmethod
+    def build_search_pattern(search_normalized: str) -> str:
+        """Преобразование пользовательского wildcard-запроса в безопасный regex."""
+        return re.escape(search_normalized).replace(r'\*', '.*')
+
     def reset_search(self):
         """Сброс поиска"""
-        self.search_entry.delete(0, tk.END)
+        self.search_entry.delete(0, TEXT_END)
         self.search_results = []
         self.is_searching = False
         self.search_info_label.config(text="")
-        self.search_results_text.delete('1.0', tk.END)
+        self.search_results_text.delete('1.0', TEXT_END)
         if self.current_display_phones:
             self.update_display()
 
@@ -1059,7 +1072,7 @@ class PhoneExtractorApp:
         if not self.search_results:
             messagebox.showwarning("Предупреждение", "Нет результатов поиска для копирования!")
             return
-        search_text = self.search_results_text.get('1.0', tk.END).strip()
+        search_text = self.search_results_text.get('1.0', TEXT_END).strip()
         self.root.clipboard_clear()
         self.root.clipboard_append(search_text)
         messagebox.showinfo("Успех", f"Скопировано {len(self.search_results)} номеров")
@@ -1077,7 +1090,7 @@ class PhoneExtractorApp:
 
         if file_path:
             try:
-                search_text = self.search_results_text.get('1.0', tk.END).strip()
+                search_text = self.search_results_text.get('1.0', TEXT_END).strip()
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(search_text)
                 messagebox.showinfo("Успех", f"Сохранено {len(self.search_results)} номеров")
@@ -1099,7 +1112,7 @@ class PhoneExtractorApp:
     # Исключения
     # ────────────────────────────────────────────────────────────
     def clear_exclusions(self):
-        self.exclusions_text.delete("1.0", tk.END)
+        self.exclusions_text.delete("1.0", TEXT_END)
         self.update_display()
 
     def load_exclusions(self):
@@ -1119,7 +1132,7 @@ class PhoneExtractorApp:
                     except UnicodeDecodeError:
                         continue
                 if content:
-                    self.exclusions_text.delete("1.0", tk.END)
+                    self.exclusions_text.delete("1.0", TEXT_END)
                     self.exclusions_text.insert("1.0", content)
                     self.update_display()
                     messagebox.showinfo("Успех", "Список исключений загружен")
@@ -1129,7 +1142,7 @@ class PhoneExtractorApp:
                 messagebox.showerror("Ошибка", f"Ошибка: {str(e)}")
 
     def save_exclusions(self):
-        content = self.exclusions_text.get("1.0", tk.END).strip()
+        content = self.exclusions_text.get("1.0", TEXT_END).strip()
         if not content:
             messagebox.showwarning("Предупреждение", "Список исключений пуст!")
             return
@@ -1152,15 +1165,15 @@ class PhoneExtractorApp:
     # ────────────────────────────────────────────────────────────
     def clear_all(self):
         """Очистка всех полей"""
-        self.input_text.delete("1.0", tk.END)
-        self.output_text.delete("1.0", tk.END)
+        self.input_text.delete("1.0", TEXT_END)
+        self.output_text.delete("1.0", TEXT_END)
         self.extracted_phones = []
         self.current_display_phones = []
         self.search_results = []
         self.duplicate_details = {}
         self.extraction_stats = {}
         self.is_searching = False
-        self.search_entry.delete(0, tk.END)
+        self.search_entry.delete(0, TEXT_END)
         self.search_info_label.config(text="")
         self.stats_label.config(text="Найдено номеров: 0")
         self._update_input_counter()
@@ -1172,7 +1185,7 @@ class PhoneExtractorApp:
     def update_info_panel(self):
         """Обновление панели статистики"""
         self.info_panel.config(state='normal')
-        self.info_panel.delete('1.0', tk.END)
+        self.info_panel.delete('1.0', TEXT_END)
 
         if not self.current_display_phones:
             info_text = (
@@ -1336,7 +1349,7 @@ class PhoneExtractorApp:
     def copy_stats(self):
         """Копирование статистики в буфер обмена"""
         self.info_panel.config(state='normal')
-        content = self.info_panel.get('1.0', tk.END).strip()
+        content = self.info_panel.get('1.0', TEXT_END).strip()
         self.info_panel.config(state='disabled')
         if content:
             self.root.clipboard_clear()
@@ -1396,12 +1409,15 @@ class PhoneExtractorApp:
         text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         for entry in reversed(self.history):
-            text.insert(tk.END, f"[{entry['time']}] {entry['action']}: {entry['details']}\n")
+            text.insert(TEXT_END, f"[{entry['time']}] {entry['action']}: {entry['details']}\n")
 
         text.config(state='disabled')
 
 
 def main():
+    if tk is None:
+        raise SystemExit("Tkinter is not installed. Install python3-tk or use a Python build with Tk support.")
+
     if HAS_DND:
         root = TkinterDnD.Tk()
     else:

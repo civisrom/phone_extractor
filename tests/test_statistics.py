@@ -2,6 +2,16 @@
 import unittest
 from collections import Counter
 
+from phone_extractor import PhoneExtractorApp
+
+
+class FakeText:
+    def __init__(self, content):
+        self.content = content
+
+    def get(self, _start, _end):
+        return self.content
+
 
 class TestStatisticsCalculation(unittest.TestCase):
     """Тесты расчёта статистики."""
@@ -109,16 +119,9 @@ class TestExclusionNormalization(unittest.TestCase):
     """Тесты нормализации номеров в списке исключений."""
 
     def _normalize(self, line):
-        """Повторяет логику get_exclusion_list"""
-        import re
-        cleaned = re.sub(r'[^\d+]', '', line)
-        if cleaned.startswith('8') and len(cleaned) == 11:
-            cleaned = '+7' + cleaned[1:]
-        elif cleaned.startswith('7') and len(cleaned) == 11:
-            cleaned = '+' + cleaned
-        elif not cleaned.startswith('+') and len(cleaned) == 10:
-            cleaned = '+7' + cleaned
-        return cleaned
+        app = object.__new__(PhoneExtractorApp)
+        app.exclusions_text = FakeText(line)
+        return next(iter(app.get_exclusion_list()))
 
     def test_plus7_format(self):
         self.assertEqual(self._normalize('+79781234567'), '+79781234567')

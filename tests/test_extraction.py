@@ -1,122 +1,9 @@
-"""Тесты извлечения телефонных номеров из мусорного текста.
-
-Не зависит от tkinter — вся логика протестирована напрямую.
-"""
+"""Тесты извлечения телефонных номеров из мусорного текста."""
 import unittest
 import re
 from collections import Counter
 
-
-class PhoneExtractorLogic:
-    """Обёртка вокруг логики извлечения без GUI — повторяет код из phone_extractor.py."""
-
-    @staticmethod
-    def is_valid_phone(phone):
-        return (
-            phone is not None
-            and len(phone) == 11
-            and phone.startswith('7')
-            and phone.isdigit()
-        )
-
-    @staticmethod
-    def is_sequential(phone):
-        sequential_count = 0
-        for i in range(len(phone) - 1):
-            if int(phone[i + 1]) == int(phone[i]) + 1 or int(phone[i + 1]) == int(phone[i]) - 1:
-                sequential_count += 1
-            else:
-                sequential_count = 0
-            if sequential_count >= 6:
-                return True
-        return False
-
-    def validate_phone_number(self, phone):
-        if not self.is_valid_phone(phone):
-            return False
-        if len(set(phone)) <= 3:
-            return False
-        if self.is_sequential(phone):
-            return False
-        return True
-
-    def extract_russian_phones(self, text):
-        """Извлечение российских номеров — копия логики из основного класса."""
-        # Паттерн с разделителями
-        pattern = (
-            r'(?<!\d)'
-            r'(?:\+7|8)'
-            r'[\s\-\.]*'
-            r'\(?'
-            r'(\d{3})'
-            r'\)?'
-            r'[\s\-\.]*'
-            r'(\d{3})'
-            r'[\s\-\.]*'
-            r'(\d{2})'
-            r'[\s\-\.]*'
-            r'(\d{2})'
-            r'(?!\d)'
-        )
-        # Сплошной
-        pattern_solid = (
-            r'(?<!\d)'
-            r'(?:\+7|8)'
-            r'(\d{10})'
-            r'(?!\d)'
-        )
-        # Начинается с 7 (без +) с обязательным разделителем
-        pattern_seven = (
-            r'(?<!\d)'
-            r'7[\s\-\.]'
-            r'\(?'
-            r'(\d{3})'
-            r'\)?'
-            r'[\s\-\.]*'
-            r'(\d{3})'
-            r'[\s\-\.]*'
-            r'(\d{2})'
-            r'[\s\-\.]*'
-            r'(\d{2})'
-            r'(?!\d)'
-        )
-
-        found_phones = []
-        occupied_ranges = []
-
-        def is_overlapping(start, end):
-            for s, e in occupied_ranges:
-                if start < e and end > s:
-                    return True
-            return False
-
-        for m in re.finditer(pattern, text):
-            start, end = m.start(), m.end()
-            if not is_overlapping(start, end):
-                digits = m.group(1) + m.group(2) + m.group(3) + m.group(4)
-                phone = '7' + digits
-                if self.validate_phone_number(phone):
-                    found_phones.append('+' + phone)
-                    occupied_ranges.append((start, end))
-
-        for m in re.finditer(pattern_solid, text):
-            start, end = m.start(), m.end()
-            if not is_overlapping(start, end):
-                phone = '7' + m.group(1)
-                if self.validate_phone_number(phone):
-                    found_phones.append('+' + phone)
-                    occupied_ranges.append((start, end))
-
-        for m in re.finditer(pattern_seven, text):
-            start, end = m.start(), m.end()
-            if not is_overlapping(start, end):
-                digits = m.group(1) + m.group(2) + m.group(3) + m.group(4)
-                phone = '7' + digits
-                if self.validate_phone_number(phone):
-                    found_phones.append('+' + phone)
-                    occupied_ranges.append((start, end))
-
-        return found_phones
+from phone_extractor import PhoneExtractorApp
 
 
 # Реалистичные тестовые номера (не содержат длинных последовательностей)
@@ -135,7 +22,7 @@ class TestRussianPhoneExtraction(unittest.TestCase):
     """Тесты извлечения российских номеров."""
 
     def setUp(self):
-        self.logic = PhoneExtractorLogic()
+        self.logic = object.__new__(PhoneExtractorApp)
 
     # ── Основные форматы ──
 
@@ -250,6 +137,11 @@ class TestRussianPhoneExtraction(unittest.TestCase):
         phones = self.logic.extract_russian_phones("7 978 555 04 22")
         self.assertEqual(phones, [PHONE_A])
 
+    def test_preserves_text_order_across_patterns(self):
+        text = "first 7 978 555 04 22 then +79165551234"
+        phones = self.logic.extract_russian_phones(text)
+        self.assertEqual(phones, [PHONE_A, PHONE_B])
+
     def test_does_not_match_short_numbers(self):
         """Короткие числа не совпадают"""
         text = "Заказ 7978555 от 04.22"
@@ -261,7 +153,7 @@ class TestValidation(unittest.TestCase):
     """Тесты валидации номеров."""
 
     def setUp(self):
-        self.logic = PhoneExtractorLogic()
+        self.logic = object.__new__(PhoneExtractorApp)
 
     def test_valid_phone(self):
         self.assertTrue(self.logic.validate_phone_number(DIGITS_A))
@@ -327,24 +219,15 @@ class TestDuplicateDetails(unittest.TestCase):
 class TestMask(unittest.TestCase):
     """Тесты маскирования номеров."""
 
+    def setUp(self):
+        self.logic = object.__new__(PhoneExtractorApp)
+
     def _apply_mask(self, phone, start_count=0, start_mask='',
                     middle_pos=0, middle_count=0, middle_mask='',
                     end_count=0, end_mask=''):
-        if phone.startswith('+'):
-            phone_digits = phone[1:]
-            prefix = '+'
-        else:
-            phone_digits = phone
-            prefix = ''
-        result = list(phone_digits)
-        if start_count > 0 and start_mask:
-            result = list(start_mask) + result[start_count:]
-        if end_count > 0 and end_mask:
-            result = result[:-end_count] + list(end_mask)
-        if middle_count > 0 and middle_mask and middle_pos >= 0:
-            if middle_pos < len(result):
-                result = result[:middle_pos] + list(middle_mask) + result[middle_pos + middle_count:]
-        return prefix + ''.join(result)
+        return self.logic.apply_advanced_mask(
+            phone, start_count, start_mask, middle_pos, middle_count, middle_mask, end_count, end_mask
+        )
 
     def test_mask_start(self):
         result = self._apply_mask(PHONE_A, start_count=2, start_mask='**')
@@ -357,6 +240,18 @@ class TestMask(unittest.TestCase):
     def test_mask_middle(self):
         result = self._apply_mask(PHONE_A, middle_pos=4, middle_count=3, middle_mask='XXX')
         self.assertEqual(result, '+7978XXX0422')
+
+
+class TestSearchPattern(unittest.TestCase):
+    """Тесты безопасного поиска с wildcard."""
+
+    def test_plus_sign_is_escaped(self):
+        pattern = PhoneExtractorApp.build_search_pattern('+7*0422')
+        self.assertTrue(re.search(pattern, '+79785550422'))
+
+    def test_digits_wildcard_still_works(self):
+        pattern = PhoneExtractorApp.build_search_pattern('978*0422')
+        self.assertTrue(re.search(pattern, '+79785550422'))
 
 
 if __name__ == '__main__':
