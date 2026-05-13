@@ -13,6 +13,14 @@ class FakeText:
         return self.content
 
 
+class FakeLabel:
+    def __init__(self):
+        self.text = None
+
+    def config(self, **kwargs):
+        self.text = kwargs.get('text')
+
+
 class FakeValue:
     def __init__(self, value):
         self.value = value
@@ -183,6 +191,38 @@ class TestExclusionNormalization(unittest.TestCase):
 
     def test_formatted(self):
         self.assertEqual(self._normalize('+7 (978) 123-45-67'), '+79781234567')
+
+    def test_line_with_text_and_multiple_phones(self):
+        app = object.__new__(PhoneExtractorApp)
+        app.exclusions_text = FakeText('VIP +7 (978) 123-45-67 and 8 916 555 12 34')
+        self.assertEqual(app.get_exclusion_list(), {'+79781234567', '+79165551234'})
+
+    def test_ignores_non_phone_numbers(self):
+        app = object.__new__(PhoneExtractorApp)
+        app.exclusions_text = FakeText('order 123\ncomment only')
+        self.assertEqual(app.get_exclusion_list(), set())
+
+
+class TestInputCounter(unittest.TestCase):
+    """Тесты счётчика символов и строк."""
+
+    def test_single_line_counts_as_one_line(self):
+        app = object.__new__(PhoneExtractorApp)
+        app.input_text = FakeText('abc')
+        app.input_counter_label = FakeLabel()
+
+        app._update_input_counter()
+
+        self.assertEqual(app.input_counter_label.text, 'Символов: 3 | Строк: 1')
+
+    def test_empty_input_counts_zero_lines(self):
+        app = object.__new__(PhoneExtractorApp)
+        app.input_text = FakeText('')
+        app.input_counter_label = FakeLabel()
+
+        app._update_input_counter()
+
+        self.assertEqual(app.input_counter_label.text, 'Символов: 0 | Строк: 0')
 
 
 if __name__ == '__main__':

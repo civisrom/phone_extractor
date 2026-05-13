@@ -34,6 +34,10 @@ class TestRussianPhoneExtraction(unittest.TestCase):
         phones = self.logic.extract_russian_phones("tel: 89785550422")
         self.assertEqual(phones, [PHONE_A])
 
+    def test_seven_solid(self):
+        phones = self.logic.extract_russian_phones("tel: 79785550422")
+        self.assertEqual(phones, [PHONE_A])
+
     def test_plus7_with_spaces(self):
         phones = self.logic.extract_russian_phones("phone: +7 978 555 04 22 end")
         self.assertEqual(phones, [PHONE_A])
@@ -252,6 +256,21 @@ class TestSearchPattern(unittest.TestCase):
     def test_digits_wildcard_still_works(self):
         pattern = PhoneExtractorApp.build_search_pattern('978*0422')
         self.assertTrue(re.search(pattern, '+79785550422'))
+
+
+class TestInternationalExtraction(unittest.TestCase):
+    """Тесты извлечения международных номеров."""
+
+    def setUp(self):
+        self.logic = object.__new__(PhoneExtractorApp)
+
+    def test_preserves_order_across_solid_and_separated_formats(self):
+        text = "short +12345678 before formatted +1 202 555 0123"
+        phones = self.logic.extract_international_phones(text)
+        self.assertEqual(phones, ['+12345678', '+12025550123'])
+
+    def test_rejects_internal_plus_in_normalization(self):
+        self.assertIsNone(self.logic.normalize_international_phone('+1 202 + 555 0123'))
 
 
 if __name__ == '__main__':

@@ -402,9 +402,9 @@ class PhoneExtractorApp:
     # Обработка файлов и ввода
     # ────────────────────────────────────────────────────────────
     def _update_input_counter(self, event=None):
-        content = self.input_text.get("1.0", TEXT_END)
-        chars = len(content.rstrip('\n'))
-        lines = content.count('\n')
+        content = self.input_text.get("1.0", TEXT_END).rstrip('\n')
+        chars = len(content)
+        lines = content.count('\n') + 1 if content else 0
         self.input_counter_label.config(text=f"Символов: {chars} | Строк: {lines}")
 
     def on_drop_input(self, event):
@@ -443,7 +443,7 @@ class PhoneExtractorApp:
                 except UnicodeDecodeError:
                     continue
 
-            if content:
+            if content is not None:
                 self.input_text.delete("1.0", TEXT_END)
                 self.input_text.insert("1.0", content)
                 self._update_input_counter()
@@ -590,10 +590,10 @@ class PhoneExtractorApp:
             r'(?!\d)'                           # не часть большего числа
         )
 
-        # Также ловим сплошные номера: +79781234567 или 89781234567
+        # Также ловим сплошные номера: +79781234567, 79781234567 или 89781234567
         pattern_solid = (
             r'(?<!\d)'
-            r'(?:\+7|8)'
+            r'(?:\+7|7|8)'
             r'(\d{10})'
             r'(?!\d)'
         )
@@ -654,8 +654,6 @@ class PhoneExtractorApp:
 
     def extract_international_phones(self, text: str) -> List[str]:
         """Извлечение международных номеров"""
-        found_phones = []
-
         # С разделителями
         pattern_sep = (
             r'(?<!\d)'
@@ -669,6 +667,14 @@ class PhoneExtractorApp:
         # Сплошной
         pattern_solid = r'(?<!\d)\+\d{8,15}(?!\d)'
 
+        candidates = []
+        for priority, pattern in enumerate((pattern_sep, pattern_solid)):
+            for m in re.finditer(pattern, text):
+                normalized = self.normalize_international_phone(m.group(0))
+                if normalized and self.validate_international_phone(normalized):
+                    candidates.append((m.start(), m.end(), priority, normalized))
+
+        found_phones = []
         occupied_ranges = []
 
         def is_overlapping(start, end):
@@ -677,32 +683,25 @@ class PhoneExtractorApp:
                     return True
             return False
 
-        for m in re.finditer(pattern_sep, text):
-            start, end = m.start(), m.end()
+        for start, end, _priority, phone in sorted(candidates, key=lambda item: (item[0], item[2], item[1])):
             if not is_overlapping(start, end):
-                normalized = self.normalize_international_phone(m.group(0))
-                if normalized and self.validate_international_phone(normalized):
-                    found_phones.append(normalized)
-                    occupied_ranges.append((start, end))
-
-        for m in re.finditer(pattern_solid, text):
-            start, end = m.start(), m.end()
-            if not is_overlapping(start, end):
-                normalized = self.normalize_international_phone(m.group(0))
-                if normalized and self.validate_international_phone(normalized):
-                    found_phones.append(normalized)
-                    occupied_ranges.append((start, end))
+                found_phones.append(phone)
+                occupied_ranges.append((start, end))
 
         return found_phones
 
     def normalize_international_phone(self, phone: str) -> Optional[str]:
         """Нормализация международного номера"""
-        digits = re.sub(r'[^\d+]', '', phone)
+        phone = phone.strip()
+        if phone.count('+') > 1 or '+' in phone[1:]:
+            return None
 
-        if not digits.startswith('+') and len(digits) >= 10:
-            digits = '+' + digits
+        digits = re.sub(r'\D', '', phone)
 
-        return digits if digits.startswith('+') else None
+        if phone.startswith('+'):
+            return '+' + digits if digits else None
+
+        return '+' + digits if len(digits) >= 10 else None
 
     def validate_international_phone(self, phone: str) -> bool:
         """Валидация международного номера (E.164)"""
@@ -870,6 +869,11 @@ class PhoneExtractorApp:
 
         return phone
 
+    @staticmethod
+    def is_canonical_phone_key(phone: str) -> bool:
+        """Проверка, что строка похожа на канонический ключ телефона."""
+        return bool(re.fullmatch(r'\+\d{8,15}', phone))
+
     def get_duplicate_details(self, phones: List[str]) -> Dict[str, int]:
         """Подсчёт вхождений одинаковых номеров с учётом разных форматов записи."""
         counts = Counter()
@@ -897,18 +901,14 @@ class PhoneExtractorApp:
             if not line:
                 continue
 
-            cleaned = re.sub(r'[^\d+]', '', line)
+            candidates = self.extract_russian_phones(line) + self.extract_international_phones(line)
+            if not candidates:
+                candidates = [line]
 
-            # Нормализация
-            if cleaned.startswith('8') and len(cleaned) == 11:
-                cleaned = '+7' + cleaned[1:]
-            elif cleaned.startswith('7') and len(cleaned) == 11:
-                cleaned = '+' + cleaned
-            elif not cleaned.startswith('+') and len(cleaned) == 10:
-                cleaned = '+7' + cleaned
-
-            if cleaned:
-                exclusions.add(cleaned)
+            for candidate in candidates:
+                phone_key = self.get_phone_identity_key(candidate)
+                if self.is_canonical_phone_key(phone_key):
+                    exclusions.add(phone_key)
 
         return exclusions
 
@@ -1169,7 +1169,7 @@ class PhoneExtractorApp:
                         break
                     except UnicodeDecodeError:
                         continue
-                if content:
+                if content is not None:
                     self.exclusions_text.delete("1.0", TEXT_END)
                     self.exclusions_text.insert("1.0", content)
                     self.update_display()
